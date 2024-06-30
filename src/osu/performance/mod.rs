@@ -544,6 +544,8 @@ impl OsuPerformanceInner {
         let total_hits = f64::from(total_hits);
 
         let mut multiplier = PERFORMANCE_BASE_MULTIPLIER;
+        // * balance inflation of the performace value
+        let overall_weight = 1.563_f64.powf(1.05);
 
         if self.mods.nf() {
             multiplier *= (1.0 - 0.02 * self.effective_miss_count).max(0.9);
@@ -553,10 +555,10 @@ impl OsuPerformanceInner {
             multiplier *= 1.0 - (f64::from(self.attrs.n_spinners) / total_hits).powf(0.85);
         }
 
-        let aim_value = self.compute_aim_value();
-        let speed_value = self.compute_speed_value();
-        let acc_value = self.compute_accuracy_value();
-        let flashlight_value = self.compute_flashlight_value();
+        let aim_value = self.compute_aim_value() * overall_weight;
+        let speed_value = self.compute_speed_value() * overall_weight;
+        let acc_value = self.compute_accuracy_value() * overall_weight;
+        let flashlight_value = self.compute_flashlight_value() * overall_weight;
 
         let pp = (aim_value.powf(1.1)
             + speed_value.powf(1.1)
@@ -592,8 +594,12 @@ impl OsuPerformanceInner {
         // * Default a 3% reduction for any # of misses.
         if self.effective_miss_count > 0.0 {
             let decay_power = if self.mods.rx() { 0.5 } else { 0.775 };
-            let growth_power = if self.mods.rx() { 1.0 + (self.effective_miss_count / 1.5) } else { self.effective_miss_count };
-            
+            let growth_power = if self.mods.rx() {
+                1.0 + (self.effective_miss_count / 1.5)
+            } else {
+                self.effective_miss_count
+            };
+
             aim_value *= 0.97
                 * (1.0 - (self.effective_miss_count / total_hits).powf(decay_power))
                     .powf(growth_power);
@@ -618,7 +624,11 @@ impl OsuPerformanceInner {
 
         if self.mods.hd() {
             // * We want to give more reward for lower AR when it comes to aim and HD. This nerfs high AR and buffs lower AR.
-            let hd_factor = if self.mods.rx() { 1.0 + 0.05 * (11.0 - self.attrs.ar) } else { 1.0 + 0.04 * (12.0 - self.attrs.ar) };
+            let hd_factor = if self.mods.rx() {
+                1.0 + 0.05 * (11.0 - self.attrs.ar)
+            } else {
+                1.0 + 0.04 * (12.0 - self.attrs.ar)
+            };
             aim_value *= hd_factor;
         }
 
@@ -636,6 +646,11 @@ impl OsuPerformanceInner {
         // Precision buff (reading)
         if self.attrs.cs > 5.58 && self.mods.rx() {
             aim_value *= ((self.attrs.cs - 5.46).powf(1.8) + 1.0).powf(0.03);
+            // Special buff for high CS and high AR
+            if self.attrs.ar > 10.8 {
+                aim_value *= 1.0 + (self.attrs.ar - 10.8);
+                aim_value *= 1.0 + (self.attrs.cs - 6.0).clamp(0.0, 0.2);
+            }
         }
 
         // * We assume 15% of sliders in a map are difficult since there's no way to tell from the performance calculator.
@@ -654,9 +669,17 @@ impl OsuPerformanceInner {
             aim_value *= slider_nerf_factor;
         }
 
-        aim_value *= if self.mods.rx() { 0.3 + self.acc / 2.0 } else { self.acc };
+        aim_value *= if self.mods.rx() {
+            0.3 + self.acc / 2.0
+        } else {
+            self.acc
+        };
         // * It is important to consider accuracy difficulty when scaling with accuracy.
         aim_value *= 0.98 + self.attrs.od.powf(2.0) / 2500.0;
+
+        if self.mods.rx() && !self.mods.dt() {
+            aim_value *= 1.2
+        }
 
         aim_value
     }

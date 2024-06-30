@@ -1,4 +1,7 @@
-use std::{cmp, f64::consts::{FRAC_PI_2, PI}};
+use std::{
+    cmp,
+    f64::consts::{FRAC_PI_2, PI},
+};
 
 use crate::{
     any::difficulty::{
@@ -103,9 +106,8 @@ impl<'a> Skill<'a, Relax> {
     fn strain_value_at(&mut self, curr: &'a OsuDifficultyObject<'a>) -> f64 {
         self.inner.curr_strain *= strain_decay(curr.delta_time, STRAIN_DECAY_BASE);
         self.inner.curr_strain +=
-            RelaxAimEvaluator::evaluate_diff_of(curr, self.diff_objects) * SKILL_MULTIPLIER;
-        self.inner.curr_strain +=
-            RelaxRhythmEvaluator::evaluate_diff_of(curr, self.diff_objects, self.inner.hit_window);
+            RelaxAimEvaluator::evaluate_diff_of(curr, self.diff_objects, self.inner.hit_window)
+                * SKILL_MULTIPLIER;
 
         self.inner.curr_strain
     }
@@ -116,12 +118,13 @@ struct RelaxAimEvaluator;
 impl RelaxAimEvaluator {
     const WIDE_ANGLE_MULTIPLIER: f64 = 1.5;
     const ACUTE_ANGLE_MULTIPLIER: f64 = 1.95;
-    const SLIDER_MULTIPLIER: f64 = 1.35;
-    const VELOCITY_CHANGE_MULTIPLIER: f64 = 0.75;
+    const SLIDER_MULTIPLIER: f64 = 1.5;
+    const VELOCITY_CHANGE_MULTIPLIER: f64 = 1.2;
 
     fn evaluate_diff_of<'a>(
         curr: &'a OsuDifficultyObject<'a>,
         diff_objects: &'a [OsuDifficultyObject<'a>],
+        hit_window: f64,
     ) -> f64 {
         let osu_curr_obj = curr;
 
@@ -167,6 +170,11 @@ impl RelaxAimEvaluator {
         // * Start strain with regular velocity.
         let mut aim_strain = curr_vel;
 
+        // * Penalize overall stream aim.
+        // * Fittings: [(100, 0.92), (300, 0.98)] linear function.
+        let stream_nerf = 0.0006 * osu_curr_obj.lazy_jump_dist + 0.86;
+        aim_strain *= stream_nerf.clamp(0.92, 0.98);
+
         // * If rhythms are the same.
         if osu_curr_obj.strain_time.max(osu_last_obj.strain_time)
             < 1.25 * osu_curr_obj.strain_time.min(osu_last_obj.strain_time)
@@ -186,8 +194,10 @@ impl RelaxAimEvaluator {
                 if osu_curr_obj.strain_time > 100.0 {
                     acute_angle_bonus = 0.0;
                 } else {
-                    let base1 =
-                        (FRAC_PI_2 * ((100.0 - osu_curr_obj.strain_time) / 25.0).min(1.0)).sin();
+                    // * Penalize deltaTime since relax is eaiser to hit at that BPM.
+                    let slower_strain_time = osu_curr_obj.strain_time * 1.2;
+
+                    let base1 = (FRAC_PI_2 * ((120.0 - slower_strain_time) / 25.0).min(1.0)).sin();
 
                     let base2 = (FRAC_PI_2
                         * ((osu_curr_obj.lazy_jump_dist).clamp(50.0, 100.0) - 50.0)
@@ -197,7 +207,7 @@ impl RelaxAimEvaluator {
                     // * Multiply by previous angle, we don't want to buff unless this is a wiggle type pattern.
                     acute_angle_bonus *= Self::calc_acute_angle_bonus(last_angle)
                     // * The maximum velocity we buff is equal to 125 / strainTime
-                        * angle_bonus.min(125.0 / osu_curr_obj.strain_time)
+                        * angle_bonus.min(125.0 / slower_strain_time)
                         // * scale buff from 150 bpm 1/4 to 200 bpm 1/4
                         * base1.powf(2.0)
                          // * Buff distance exceeding 50 (radius) up to 100 (diameter).
@@ -208,6 +218,13 @@ impl RelaxAimEvaluator {
                 wide_angle_bonus *= angle_bonus
                     * (1.0
                         - wide_angle_bonus.min(Self::calc_wide_angle_bonus(last_angle).powf(3.0)));
+
+                // * Penalize wide angles if their distances are quite small (consider as wide angle stream).
+                // * Only jump dist is considered here, not velocity.
+                // * Fittings: [(200, 0), (250, 0.5), (300, 1), (350, 1)] linear function.
+                let wide_stream_nerf = osu_curr_obj.lazy_jump_dist * 0.007 - 1.3;
+                wide_angle_bonus *= wide_stream_nerf.clamp(0.0, 1.0);
+
                 // * Penalize acute angles if they're repeated, reducing the penalty as the lastLastAngle gets more obtuse.
                 acute_angle_bonus *= 0.5
                     + 0.5
@@ -254,6 +271,11 @@ impl RelaxAimEvaluator {
         );
 
         aim_strain += slider_bonus * Self::SLIDER_MULTIPLIER;
+
+        // * If the distance is small enough, we want to buff the rhythm complexity.
+        if osu_curr_obj.lazy_jump_dist < 350.0 {
+            aim_strain *= RelaxRhythmEvaluator::evaluate_diff_of(curr, diff_objects, hit_window);
+        }
 
         aim_strain
     }

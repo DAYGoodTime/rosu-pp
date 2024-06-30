@@ -24,7 +24,7 @@ pub struct BeatmapAttributes {
 /// AR and OD hit windows
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub struct HitWindows {
-    /// Hit window for approach rate i.e. TimePreempt in milliseconds.
+    /// Hit window for approach rate i.e. `TimePreempt` in milliseconds.
     pub ar: f64,
     /// Hit window for overall difficulty i.e. time to hit a 300 ("Great") in milliseconds.
     pub od: f64,
@@ -185,7 +185,7 @@ impl BeatmapAttributesBuilder {
 
         let clock_rate = self.clock_rate.unwrap_or(mods.clock_rate());
         let ar_clock_rate = if self.ar.with_mods { 1.0 } else { clock_rate };
-        let od_clock_rate = if self.ar.with_mods { 1.0 } else { clock_rate };
+        let od_clock_rate = if self.od.with_mods { 1.0 } else { clock_rate };
 
         let mod_mult = |val: f32| {
             if mods.hr() {
